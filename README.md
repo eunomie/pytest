@@ -18,7 +18,7 @@ On a python project, using pytest as the test runner:
   - export captured stdout, stderr, and Python logging records as OTel logs
   - run `pytest`
 
-By default the toolchain builds an Alpine + `uv` container. You can instead provide your own container (with Python and `uv` installed); the toolchain reuses its existing virtual environment at `/opt/venv` rather than recreating it.
+`pytest:test` runs against a self-contained Alpine + `uv` base, so it needs no setup. To trace pytest inside your own container instead (your Python, your dependencies, your environment), use `installPytestOtel`: pass it your container and it installs the bundled `pytest_otel` (using `uv` if present, otherwise `pip`), returning the container so you can run `pytest` yourself with tracing enabled.
 
 Example, using `fastly/fastly-cli`:
 
