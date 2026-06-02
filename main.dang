@@ -4,12 +4,16 @@ type Pytest {
   """
   The uv binary extracted from the bundled Docker image
   """
-  let uvBinary = currentModule.source.directory("images/uv").dockerBuild.rootfs
+  let uvBinary: Directory! {
+    currentModule.source.directory("images/uv").dockerBuild.rootfs
+  }
 
   """
   The alpine base image
   """
-  let alpine = currentModule.source.directory("images/alpine").dockerBuild
+  let alpine: Container! {
+    currentModule.source.directory("images/alpine").dockerBuild
+  }
 
   """
   The pytest_otel source directory bundled with this module
@@ -17,16 +21,33 @@ type Pytest {
   let pytestOtelSource = currentModule.source.directory("pytest_otel")
 
   """
-  Optional: The source directory containing your Python project
+  Optional: The path to the source directory containing your Python project
   """
-  pub source: Directory! @defaultPath(path: "/")
+  pub sourcePath: String! = "/"
+
+  pub source: Directory!
+
+  """
+  Additional arguments to pass to pytest (e.g., ["-x", "--tb=short"])
+  """
+  pub args: [String!]! = ["-v"]
 
   """
   Optional: Python version to use (e.g., "3.14", "3.13", "3.12")
 
   Only relevant if you are not setting a specific custom container.
   """
-  pub pythonVersion: String! = "3.14"
+  pub pythonVersion: String!
+
+  new(
+    ws: Workspace!,
+    sourcePath: String! = "/",
+    pythonVersion: String! = "3.14",
+  ) {
+    self.source = ws.directory(sourcePath)
+    self.pythonVersion = pythonVersion
+    self
+  }
 
   let base: Container! {
     alpine
@@ -42,6 +63,8 @@ type Pytest {
       .withDirectory("/opt/pytest_otel", pytestOtelSource)
       .withExec(["uv", "pip", "install", "/opt/pytest_otel"])
   }
+
+  pub container: Container = null
 
   """
   Test a Python project with pytest and OpenTelemetry tracing.
@@ -59,14 +82,12 @@ type Pytest {
   - Run pytest with pytest_otel enabled
   """
   pub test(
-    """
-    Additional arguments to pass to pytest (e.g., ["-x", "--tb=short"])
-    """
-    args: [String!]! = ["-v"],
+    ws: Workspace!,
   ): Void @check {
-    base
-      .withDirectory("/app", source)
-      .withWorkdir("/app")
+    addSourceDir(
+      installPytestOtel(base),
+      ws.directory(sourcePath),
+    )
       # requirements.txt projects need their deps installed explicitly;
       # pyproject.toml projects are synced automatically by `uv run`.
       .withExec([
@@ -77,6 +98,15 @@ type Pytest {
       .sync
 
     null
+  }
+
+  let addSourceDir(
+    ctr: Container!,
+    dir: Directory!,
+  ): Container! {
+    ctr
+      .withDirectory("/app", dir)
+      .withWorkdir("/app")
   }
 
   """
@@ -96,22 +126,26 @@ type Pytest {
     # The available tooling is a runtime property of the container, so detection
     # lives in this script: prefer uv, then fall back to pip and `python -m pip`.
     let script = """
-      #!/bin/sh
-      set -e
+    #!/bin/sh
+    set -e
 
-      if command -v uv >/dev/null 2>&1; then
-        uv pip install /opt/pytest_otel
-      elif command -v pip >/dev/null 2>&1; then
-        pip install /opt/pytest_otel
-      elif command -v python3 >/dev/null 2>&1; then
-        python3 -m pip install /opt/pytest_otel
-      elif command -v python >/dev/null 2>&1; then
-        python -m pip install /opt/pytest_otel
-      else
-        echo "pytest toolchain: could not find uv, pip, or python in the container to install pytest_otel" >&2
-        exit 1
-      fi
-      """
+    if command -v uv >/dev/null 2>&1; then
+      echo "uv found"
+      uv pip install /opt/pytest_otel
+    elif command -v pip >/dev/null 2>&1; then
+      echo "pip found"
+      pip install /opt/pytest_otel
+    elif command -v python3 >/dev/null 2>&1; then
+      echo "python3 found"
+      python3 -m pip install /opt/pytest_otel
+    elif command -v python >/dev/null 2>&1; then
+      echo "python found"
+      python -m pip install /opt/pytest_otel
+    else
+      echo "pytest toolchain: could not find uv, pip, or python in the container to install pytest_otel" >&2
+      exit 1
+    fi
+    """
 
     ctr
       .withDirectory("/opt/pytest_otel", pytestOtelSource)
